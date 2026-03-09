@@ -22,6 +22,8 @@ export default function CreatePostPage() {
   const [tagsInput, setTagsInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [loreConfirmed, setLoreConfirmed] = useState(false);
+  const [error, setError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
 
   /* ----------------------------
      🔸 Tag Handling (FIXED)
@@ -43,13 +45,15 @@ export default function CreatePostPage() {
   ----------------------------- */
 
   const handleSubmit = () => {
-    if (!title || !content) {
-      alert("Title and content are required.");
+    setError("");
+
+    if (!title.trim() || !content.trim()) {
+      setError("Title and content are required.");
       return;
     }
 
     if (type === "lore" && !loreConfirmed) {
-      alert("You must confirm the lore guidelines.");
+      setError("You must confirm the lore guidelines before posting.");
       return;
     }
 
@@ -69,6 +73,9 @@ export default function CreatePostPage() {
     setTagsInput("");
     setTags([]);
     setLoreConfirmed(false);
+    setError("");
+    setSubmitted(true);
+    setTimeout(() => setSubmitted(false), 3000);
   };
 
   /* ----------------------------
@@ -201,9 +208,21 @@ export default function CreatePostPage() {
             />
           </div>
 
+          {/* Error / success feedback */}
+          {error && (
+            <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+              {error}
+            </div>
+          )}
+          {submitted && (
+            <div className="px-4 py-3 rounded-xl bg-[#7CFF8A]/10 border border-[#7CFF8A]/30 text-[#7CFF8A] text-sm">
+              ✓ Post published to the feed!
+            </div>
+          )}
+
           <button
             onClick={handleSubmit}
-            className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/20 transition"
+            className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/20 transition font-medium"
           >
             Publish Post
           </button>

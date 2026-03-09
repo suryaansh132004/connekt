@@ -8,6 +8,7 @@ import { Space_Grotesk } from "next/font/google"
 import GlowBackground from "../components/layout/GlowBackground"
 import BottomNav from "../components/layout/BottomNav"
 import { FeedProvider } from "@/context/FeedContext"
+import { UserProfileProvider } from "@/context/UserProfileContext"
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -29,11 +30,13 @@ export default function RootLayout({
       <body
         className={`${spaceGrotesk.variable} bg-[#12001F] text-white min-h-screen relative overflow-x-hidden`}
       >
-        <FeedProvider>
-          <GlowBackground />
-          {children}
-          <BottomNav />
-        </FeedProvider>
+        <UserProfileProvider>
+          <FeedProvider>
+            <GlowBackground />
+            {children}
+            <BottomNav />
+          </FeedProvider>
+        </UserProfileProvider>
       </body>
     </html>
   )
