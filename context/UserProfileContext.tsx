@@ -4,11 +4,14 @@ import {
   createContext,
   useContext,
   useState,
+  useEffect,
   ReactNode,
 } from "react";
+import { useAuth } from "./AuthContext";
+import { supabase } from "@/lib/supabase";
 
 /* =========================================================
-   🔹 Profile Type
+    🔹 Profile Type
 ========================================================= */
 
 export interface UserProfile {
@@ -19,9 +22,10 @@ export interface UserProfile {
   bio: string;
   skills: string[];
   initials: string;
-  avatarColor: string;   // hex for the avatar ring / bg tint
+  avatarColor: string;
   github: string;
   portfolio: string;
+  linkedin: string;
   notifications: {
     eventReminders: boolean;
     collabRequests: boolean;
@@ -32,6 +36,7 @@ export interface UserProfile {
     showOnlineStatus: boolean;
     publicProfile: boolean;
   };
+  isVerified: boolean;
 }
 
 /* =========================================================
@@ -50,16 +55,17 @@ interface UserProfileContextType {
 ========================================================= */
 
 const DEFAULT_PROFILE: UserProfile = {
-  displayName: "David Chen",
-  handle: "david_chen",
-  dept: "Computer Science",
-  year: "2nd Year",
-  bio: "Night owl coder 🦉 looking for hackathon teammates. Currently obsessed with generative art and retro game dev.",
-  skills: ["Python", "React", "UI Design"],
-  initials: "DC",
+  displayName: "",
+  handle: "",
+  dept: "",
+  year: "",
+  bio: "",
+  skills: [],
+  initials: "U",
   avatarColor: "#4DEFFF",
   github: "",
   portfolio: "",
+  linkedin: "",
   notifications: {
     eventReminders: true,
     collabRequests: true,
@@ -70,7 +76,10 @@ const DEFAULT_PROFILE: UserProfile = {
     showOnlineStatus: true,
     publicProfile: true,
   },
+  isVerified: false,
 };
+
+const PROFILE_KEY = "connekt_profile";
 
 /* =========================================================
    🔹 Context
@@ -79,24 +88,122 @@ const DEFAULT_PROFILE: UserProfile = {
 const UserProfileContext = createContext<UserProfileContextType | null>(null);
 
 export function UserProfileProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
 
-  const updateProfile = (patch: Partial<UserProfile>) =>
-    setProfile((prev) => ({ ...prev, ...patch }));
+  // Sync with Supabase on Login
+  useEffect(() => {
+    async function fetchProfile() {
+      if (!user) {
+        setProfile(DEFAULT_PROFILE);
+        return;
+      }
 
-  const updateNotifications = (
-    patch: Partial<UserProfile["notifications"]>
-  ) =>
-    setProfile((prev) => ({
-      ...prev,
-      notifications: { ...prev.notifications, ...patch },
-    }));
+      try {
+        // Try fetching from Supabase first (Source of Truth)
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", user.uid)
+          .single();
+
+        if (data) {
+          const fetchedProfile: UserProfile = {
+            ...DEFAULT_PROFILE,
+            displayName: data.display_name || "",
+            handle: data.handle || "",
+            dept: data.dept || "",
+            year: data.year || "",
+            bio: data.bio || "",
+            skills: data.skills || [],
+            avatarColor: data.avatar_color || DEFAULT_PROFILE.avatarColor,
+            github: data.github || "",
+            portfolio: data.portfolio || "",
+            linkedin: data.linkedin || "",
+            notifications: data.notifications || DEFAULT_PROFILE.notifications,
+            privacy: data.privacy || DEFAULT_PROFILE.privacy,
+            initials: (data.display_name || "U").charAt(0).toUpperCase(),
+            isVerified: data.is_verified || false,
+          };
+          setProfile(fetchedProfile);
+          localStorage.setItem(PROFILE_KEY, JSON.stringify(fetchedProfile));
+        } else {
+          // Fallback to localStorage if not in DB yet (e.g. legacy user or first-time sync)
+          const stored = localStorage.getItem(PROFILE_KEY);
+          if (stored) setProfile(JSON.parse(stored));
+        }
+      } catch (err) {
+        console.error("Profile Fetch Error:", err);
+      }
+    }
+
+    fetchProfile();
+  }, [user]);
+
+  // Persist helper (Local + Supabase)
+  const persist = async (updated: UserProfile) => {
+    try {
+      localStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
+      
+      if (user) {
+        // Update Supabase
+        const { error } = await supabase
+          .from("profiles")
+          .update({
+            display_name: updated.displayName,
+            handle: updated.handle,
+            dept: updated.dept,
+            year: updated.year,
+            bio: updated.bio,
+            skills: updated.skills,
+            avatar_color: updated.avatarColor,
+            github: updated.github,
+            portfolio: updated.portfolio,
+            linkedin: updated.linkedin,
+            notifications: updated.notifications,
+            privacy: updated.privacy,
+            is_verified: updated.isVerified,
+          })
+          .eq("id", user.uid);
+
+        if (error) {
+          console.error("Supabase Save Error:", error);
+        } else {
+          console.log("Profile successfully saved to Supabase");
+        }
+      }
+    } catch (err) {
+      console.error("Persistence Error:", err);
+    }
+  };
+
+  const updateProfile = (patch: Partial<UserProfile>) => {
+    setProfile((prev) => {
+      const next = { ...prev, ...patch };
+      persist(next);
+      return next;
+    });
+  };
+
+  const updateNotifications = (patch: Partial<UserProfile["notifications"]>) =>
+    setProfile((prev) => {
+      const next = {
+        ...prev,
+        notifications: { ...prev.notifications, ...patch },
+      };
+      persist(next);
+      return next;
+    });
 
   const updatePrivacy = (patch: Partial<UserProfile["privacy"]>) =>
-    setProfile((prev) => ({
-      ...prev,
-      privacy: { ...prev.privacy, ...patch },
-    }));
+    setProfile((prev) => {
+      const next = {
+        ...prev,
+        privacy: { ...prev.privacy, ...patch },
+      };
+      persist(next);
+      return next;
+    });
 
   return (
     <UserProfileContext.Provider

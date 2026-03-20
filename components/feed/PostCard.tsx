@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { Heart, MessageCircle, Flag } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
+import { Heart, MessageCircle, Flag, MoreVertical, Trash2, Edit2, Check, X as XIcon } from "lucide-react";
+import { useFeed, Comment } from "@/context/FeedContext";
+import { useUserProfile } from "@/context/UserProfileContext";
+import { useToast } from "@/context/ToastContext";
 
 /* =========================================================
    🔹 Post Types
@@ -14,14 +18,17 @@ export type PostType = "collab" | "event" | "question" | "lore";
 ========================================================= */
 
 interface PostCardProps {
+  id: string;
   type: PostType;
   title: string;
   content: string;
   author?: string;
-  timestamp: string;
+  timestamp: number;
   tags?: string[];
   likes?: number;
-  comments?: number;
+  isLiked?: boolean;
+  comments?: Comment[];
+  targetDept?: string;
 }
 
 /* =========================================================
@@ -39,6 +46,7 @@ export const typeColors: Record<PostType, string> = {
    🔹 Component
 ========================================================= */
 export default function PostCard({
+  id,
   type,
   title,
   content,
@@ -46,33 +54,72 @@ export default function PostCard({
   timestamp,
   tags = [],
   likes = 0,
+  isLiked = false,
+  comments = [],
+  targetDept,
 }: PostCardProps) {
+  const { likePost, addComment, deletePost, editPost, deleteComment } = useFeed();
+  const { profile } = useUserProfile();
+  const { toast } = useToast();
 
   /* ---------------------------
      🔸 Local State
   ---------------------------- */
 
-  const [likeCount, setLikeCount] = useState(likes);
-  const [liked, setLiked] = useState(false);
-const [lastTap, setLastTap] = useState(0);
+  const [lastTap, setLastTap] = useState(0);
   const [showComments, setShowComments] = useState(false);
-  const [commentList, setCommentList] = useState<string[]>([
-    "Looks interesting!",
-    "I'm in 👀",
-  ]);
   const [newComment, setNewComment] = useState("");
+  
+  // Edit & Menu State
+  const [showMenu, setShowMenu] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(content);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // --- Timestamp & Edit Constraint Logic ---
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000); // refresh every minute
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatTimestamp = (ts: number) => {
+    const diffMs = now - ts;
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+    if (diffMinutes < 1) return "Just now";
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    if (diffHours === 1) return "1h ago";
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return new Date(ts).toLocaleDateString();
+  };
+
+  const isAuthor = profile?.handle === author || author === "You" || profile?.displayName === author;
+  const canEdit = isAuthor && (now - timestamp < 10 * 60 * 1000);
+
+  // Close menu on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   /* ---------------------------
      🔸 Like Handler
   ---------------------------- */
 
   const handleLike = () => {
-    if (liked) {
-      setLikeCount((prev) => prev - 1);
-    } else {
-      setLikeCount((prev) => prev + 1);
-    }
-    setLiked(!liked);
+    // With real-time, we just call likePost in context
+    // The UI will update when the postgres change comes in
+    // or we can optimistic update here if desired.
+    likePost(id);
+    toast(isLiked ? "Like removed" : "Post liked!", "success");
   };
 
   /* ---------------------------
@@ -82,8 +129,15 @@ const [lastTap, setLastTap] = useState(0);
   const handleAddComment = () => {
     if (newComment.trim() === "") return;
 
-    setCommentList((prev) => [...prev, newComment]);
+    addComment(id, {
+      id: crypto.randomUUID(),
+      text: newComment,
+      author: profile?.displayName || "You",
+      authorId: profile?.handle || "", // temporary until we have real user IDs in context
+      timestamp: "Just now",
+    });
     setNewComment("");
+    toast("Comment added!", "success");
   };
 
   return (
@@ -94,9 +148,8 @@ const [lastTap, setLastTap] = useState(0);
                 const DOUBLE_TAP_DELAY = 300;
 
                 if (now - lastTap < DOUBLE_TAP_DELAY) {
-                if (!liked) {
-                    setLiked(true);
-                    setLikeCount((prev) => prev + 1);
+                if (!isLiked) {
+                    handleLike();
                 }
                 }
 
@@ -125,21 +178,69 @@ const [lastTap, setLastTap] = useState(0);
 
         {/* Top Row */}
         <div className="flex justify-between items-center mb-3">
+          <div className="flex items-center gap-2">
+            <span
+              className="text-xs font-medium px-3 py-1 rounded-full border"
+              style={{
+                color: typeColors[type],
+                borderColor: `${typeColors[type]}55`,
+                backgroundColor: `${typeColors[type]}15`,
+              }}
+            >
+              {type.toUpperCase()}
+            </span>
+            {targetDept && (
+              <span className="text-[10px] font-bold px-2 py-1 rounded border border-white/10 bg-white/5 text-white/60">
+                🎯 {targetDept} ONLY
+              </span>
+            )}
+          </div>
 
-          <span
-            className="text-xs font-medium px-3 py-1 rounded-full border"
-            style={{
-              color: typeColors[type],
-              borderColor: `${typeColors[type]}55`,
-              backgroundColor: `${typeColors[type]}15`,
-            }}
-          >
-            {type.toUpperCase()}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-white/40">{formatTimestamp(timestamp)}</span>
+            {/* Author Actions Menu */}
+            {isAuthor && (
+              <div className="relative" ref={menuRef}>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMenu(!showMenu);
+                  }}
+                  className="p-1 hover:bg-white/10 rounded-lg text-white/60 hover:text-white transition-colors"
+                >
+                  <MoreVertical size={16} />
+                </button>
 
-          <span className="text-xs text-white/40">
-            {timestamp}
-          </span>
+                {showMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-36 bg-[#1A0B2E] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-20 isolate">
+                    {canEdit && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsEditing(true);
+                          setShowMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-xs text-white/80 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors"
+                      >
+                        <Edit2 size={14} /> Edit Post
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deletePost(id);
+                        setShowMenu(false);
+                        toast("Post deleted", "success");
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-red-400/10 flex items-center gap-2 transition-colors"
+                    >
+                      <Trash2 size={14} /> Delete Post
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Title */}
@@ -161,16 +262,61 @@ const [lastTap, setLastTap] = useState(0);
           </div>
         )}
 
-        {/* Content */}
-        <p className="text-sm text-white/70 leading-relaxed mb-4">
-          {content}
-        </p>
+        {/* Content & Edit Mode */}
+        {isEditing ? (
+          <div className="mb-4 space-y-2">
+            <textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-[#7CFF8A]/50 resize-none"
+              rows={4}
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsEditing(false);
+                  setEditContent(content); // cancel
+                }}
+                className="p-1.5 rounded-lg bg-white/5 text-white/60 hover:text-white transition-colors"
+                title="Cancel"
+              >
+                <XIcon size={16} />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  editPost(id, editContent);
+                  setIsEditing(false);
+                  toast("Post updated", "success");
+                }}
+                className="p-1.5 rounded-lg bg-[#7CFF8A]/20 text-[#7CFF8A] hover:bg-[#7CFF8A]/30 transition-colors"
+                title="Save Changes"
+              >
+                <Check size={16} />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-white/70 leading-relaxed mb-4">
+            {content}
+          </p>
+        )}
 
         {/* Footer */}
         <div className="flex justify-between items-center text-xs text-white/50">
 
-          <span>
-            {type === "lore" ? "Anonymous" : author}
+          <span className="relative z-10">
+            {type === "lore" ? "Anonymous" : (
+              <Link
+                href={`/profile/${author}`}
+                onClick={(e) => e.stopPropagation()}
+                className="hover:text-white transition-colors hover:underline"
+              >
+                {author}
+              </Link>
+            )}
           </span>
 
           <div className="flex items-center gap-6">
@@ -182,15 +328,15 @@ const [lastTap, setLastTap] = useState(0);
                 handleLike();
             }}
             className={`flex items-center gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 ${
-                liked ? "text-pink-400" : "hover:text-white"
+                isLiked ? "text-pink-400" : "hover:text-white"
             }`}
             >
             <Heart
                 size={16}
                 strokeWidth={1.5}
-                fill={liked ? "currentColor" : "none"}
+                fill={isLiked ? "currentColor" : "none"}
             />
-            <span>{likeCount}</span>
+            <span>{likes}</span>
             </button>
 
 
@@ -200,7 +346,7 @@ const [lastTap, setLastTap] = useState(0);
               className="flex items-center gap-1.5 hover:text-white transition-all duration-200 hover:scale-105 active:scale-95"
             >
               <MessageCircle size={16} strokeWidth={1.5} />
-              <span>{commentList.length}</span>
+              <span>{comments.length}</span>
             </button>
 
             {/* Report */}
@@ -219,15 +365,38 @@ const [lastTap, setLastTap] = useState(0);
           <div className="mt-5 border-t border-white/10 pt-4 space-y-3">
 
             {/* Existing Comments */}
-            <div className="space-y-2 max-h-40 overflow-y-auto">
-              {commentList.map((comment, index) => (
-                <div
-                  key={index}
-                  className="text-sm text-white/70 bg-white/5 px-3 py-2 rounded-lg"
-                >
-                  {comment}
-                </div>
-              ))}
+            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+              {comments.map((comment, index) => {
+                const isCommentAuthor = profile?.displayName === comment.author || comment.author === "You";
+                return (
+                  <div
+                    key={comment.id || index}
+                    className="text-sm bg-white/5 px-3 py-2 rounded-lg flex justify-between items-start group/comment"
+                  >
+                    <div>
+                      <p className="font-semibold text-white/90 text-xs mb-1">
+                        {comment.author}{" "}
+                        <span className="font-normal text-white/30 text-[10px] ml-1">
+                          {comment.timestamp}
+                        </span>
+                      </p>
+                      <p className="text-white/70">{comment.text}</p>
+                    </div>
+                    {isCommentAuthor && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteComment(id, comment.id);
+                        }}
+                        className="opacity-0 group-hover/comment:opacity-100 p-1 text-white/30 hover:text-red-400 hover:bg-white/5 rounded transition-all"
+                        title="Delete Comment"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {/* Add Comment Input */}

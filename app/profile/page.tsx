@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useFeed } from "@/context/FeedContext";
 import { useUserProfile } from "@/context/UserProfileContext";
+import { useAuth } from "@/context/AuthContext";
 import { typeColors } from "@/components/feed/PostCard";
 import {
   Settings,
@@ -13,6 +14,7 @@ import {
   Globe,
   Heart,
   MessageCircle,
+  Linkedin,
 } from "lucide-react";
 
 /* =========================================================
@@ -22,6 +24,7 @@ import {
 export default function ProfilePage() {
   const { posts } = useFeed();
   const { profile } = useUserProfile();
+  const { logout } = useAuth();
 
   const myPosts = posts.slice(0, 3);
 
@@ -29,7 +32,7 @@ export default function ProfilePage() {
     <div className="min-h-screen pt-6 pb-32 space-y-5 max-w-[800px] mx-auto">
 
       {/* ─── Header ─────────────────────────────────── */}
-      <header className="sticky top-0 z-40 pb-4 bg-gradient-to-b from-[#12001F] via-[#12001F]/95 to-transparent flex items-center gap-3 pt-2">
+      <header className="sticky top-0 z-40 pb-4 bg-gradient-to-b from-[#080808] via-[#080808]/95 to-transparent flex items-center gap-3 pt-2">
         <h1 className="text-2xl font-bold tracking-tight text-white flex-1">
           Profile
         </h1>
@@ -42,7 +45,11 @@ export default function ProfilePage() {
         >
           <Settings size={20} />
         </Link>
-        <button className="p-2 rounded-full hover:bg-white/5 transition-colors text-white/40 hover:text-[#FF5C8A]">
+        <button
+          onClick={logout}
+          className="p-2 rounded-full hover:bg-white/5 transition-colors text-white/40 hover:text-[#FF5C8A]"
+          title="Log out"
+        >
           <LogOut size={20} />
         </button>
       </header>
@@ -51,9 +58,10 @@ export default function ProfilePage() {
       <div className="bg-white/5 rounded-2xl border border-white/5 p-6 relative overflow-hidden">
         {/* Banner gradient */}
         <div
-          className="absolute top-0 left-0 w-full h-24 pointer-events-none"
+          className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-50"
           style={{
-            background: `linear-gradient(to right, ${profile.avatarColor}20, #7CFF8A20)`,
+            background: `radial-gradient(circle at top left, ${profile.avatarColor}30, transparent 60%),
+                        radial-gradient(circle at top right, #7CFF8A20, transparent 60%)`,
           }}
         />
 
@@ -141,7 +149,17 @@ export default function ProfilePage() {
                   <Globe size={14} /> Portfolio
                 </a>
               )}
-              {!profile.github && !profile.portfolio && (
+              {profile.linkedin && (
+                <a
+                  href={profile.linkedin}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#12001F] border border-white/10 hover:border-[#0A66C2]/50 hover:text-[#0A66C2] transition-colors text-xs font-medium text-white/60"
+                >
+                  <Linkedin size={14} /> LinkedIn
+                </a>
+              )}
+              {!profile.github && !profile.portfolio && !profile.linkedin && (
                 <Link
                   href="/settings?tab=profile"
                   className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#12001F] border border-dashed border-white/10 hover:border-[#7CFF8A]/40 transition-colors text-xs font-medium text-white/30"
@@ -160,12 +178,14 @@ export default function ProfilePage() {
           <h3 className="text-base font-bold text-white flex items-center gap-2">
             <span className="text-[#FFD166]">✦</span> Bio
           </h3>
-          <Link
-            href="/settings?tab=profile"
-            className="text-xs text-white/40 hover:text-[#7CFF8A] transition-colors"
-          >
-            Edit
-          </Link>
+          {profile.bio && (
+            <Link
+              href="/settings?tab=profile"
+              className="text-xs text-white/40 hover:text-[#7CFF8A] transition-colors"
+            >
+              Edit
+            </Link>
+          )}
         </div>
         <p className="text-white/70 text-sm leading-relaxed">
           {profile.bio || (
@@ -195,9 +215,10 @@ export default function ProfilePage() {
           {myPosts.map((post) => {
             const color = typeColors[post.type];
             return (
-              <div
+              <Link
                 key={post.id}
-                className="snap-center shrink-0 w-[280px] bg-white/5 rounded-2xl border border-white/5 p-4 relative overflow-hidden transition-all duration-300 cursor-pointer hover:border-white/10"
+                href={`/post/${post.id}`}
+                className="snap-center shrink-0 w-[280px] bg-white/5 rounded-2xl border border-white/5 p-4 relative overflow-hidden transition-all duration-300 cursor-pointer hover:border-white/10 block"
                 style={{ borderLeft: `4px solid ${color}` }}
               >
                 <div className="flex justify-between items-start mb-2">
@@ -212,7 +233,7 @@ export default function ProfilePage() {
                     {post.type}
                   </span>
                   <span className="text-[10px] text-white/30">
-                    {Math.ceil((Date.now() - post.timestamp) / (1000 * 60 * 60))}h ago
+                    {Math.ceil((Date.now() - Number(post.timestamp)) / (1000 * 60 * 60))}h ago
                   </span>
                 </div>
                 <p className="text-white text-sm font-medium mb-3 line-clamp-2">
@@ -226,7 +247,7 @@ export default function ProfilePage() {
                     <MessageCircle size={11} /> 0
                   </span>
                 </div>
-              </div>
+              </Link>
             );
           })}
         </div>

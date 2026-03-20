@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import PostCard, { PostType, typeColors } from "@/components/feed/PostCard";
 import { useFeed } from "@/context/FeedContext";
+import { useUserProfile } from "@/context/UserProfileContext";
+import { PostSkeleton } from "@/components/layout/Skeleton";
 
 /* =========================================================
    🔹 Home Page
@@ -10,6 +12,7 @@ import { useFeed } from "@/context/FeedContext";
 
 export default function Home() {
   const { posts } = useFeed();
+  const { profile } = useUserProfile();
 
   /* ----------------------------
      🔸 State
@@ -17,28 +20,63 @@ export default function Home() {
 
   const [activeFilter, setActiveFilter] = useState("all");
   const [feedMode, setFeedMode] = useState<"trending" | "new">("new");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const postsPerPage = 5;
 
-  /* ----------------------------
-     🔸 Format Timestamp
-  ----------------------------- */
+  useEffect(() => {
+    if (posts.length > 0) {
+      setIsLoading(false);
+    } else {
+      const timer = setTimeout(() => setIsLoading(false), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [posts]);
 
-  function formatTimestamp(timestamp: number) {
-    const diffMs = Date.now() - timestamp;
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  // Intersection Observer for infinite scrolling
+  const observer = useRef<IntersectionObserver | null>(null);
+  const lastPostElementRef = useCallback(
+    (node: HTMLDivElement) => {
+      if (isLoading || isFetchingMore) return;
+      if (observer.current) observer.current.disconnect();
 
-    if (diffHours < 1) return "Just now";
-    if (diffHours === 1) return "1h ago";
-    return `${diffHours}h ago`;
-  }
+      observer.current = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) {
+          setIsFetchingMore(true);
+          // Simulate network request
+          setTimeout(() => {
+            setPage((prevPage) => prevPage + 1);
+            setIsFetchingMore(false);
+          }, 800);
+        }
+      });
+
+      if (node) observer.current.observe(node);
+    },
+    [isLoading, isFetchingMore]
+  );
+
+
 
   /* ----------------------------
      🔸 Filtering
   ----------------------------- */
 
-  let filteredPosts =
-    activeFilter === "all"
-      ? posts
-      : posts.filter((post) => post.type === activeFilter);
+  let filteredPosts = posts.filter((post) => {
+    // Hide if targeted to another department
+    if (post.targetDept && post.targetDept !== profile.dept) return false;
+    
+    // Hide if not matching active category tab
+    if (activeFilter !== "all" && post.type !== activeFilter) return false;
+    
+    return true;
+  });
+
+  // Reset page when filter changes
+  useEffect(() => {
+    setPage(1);
+  }, [activeFilter, feedMode]);
 
   /* ----------------------------
      🔸 Sorting
@@ -52,7 +90,7 @@ export default function Home() {
 
   if (feedMode === "new") {
     filteredPosts = [...filteredPosts].sort(
-      (a, b) => b.timestamp - a.timestamp
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
   }
 
@@ -73,7 +111,7 @@ export default function Home() {
   ========================================================= */
 
   return (
-    <div className="pt-8 space-y-6">
+    <div className="pt-8 pb-28 space-y-6">
       <h1 className="text-3xl font-bold">Home</h1>
 
       {/* Filter Tabs */}
@@ -142,18 +180,56 @@ export default function Home() {
 
       {/* Feed */}
       <div className="space-y-6">
-        {filteredPosts.map((post) => (
-          <PostCard
-            key={post.id}
-            type={post.type}
-            title={post.title}
-            content={post.content}
-            author={post.author}
-            timestamp={formatTimestamp(post.timestamp)}
-            tags={post.tags}
-            likes={post.likes}
-          />
-        ))}
+        {isLoading ? (
+          <div className="space-y-6 fade-in">
+            <PostSkeleton />
+            <PostSkeleton />
+            <PostSkeleton />
+          </div>
+        ) : filteredPosts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 fade-in">
+            <div className="w-20 h-20 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-center mb-6 shadow-inner">
+              <span className="text-4xl filter drop-shadow-[0_0_10px_rgba(255,255,255,0.2)]">📭</span>
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">No posts available</h3>
+            <p className="text-white/50 text-sm text-center max-w-sm">
+              It looks like there's nothing here yet. Check back later or start a new conversation yourself!
+            </p>
+          </div>
+        ) : (
+          <>
+            {filteredPosts.slice(0, page * postsPerPage).map((post, index) => {
+              const isLastElement = index === filteredPosts.slice(0, page * postsPerPage).length - 1;
+              return (
+                <div key={post.id} ref={isLastElement ? lastPostElementRef : null}>
+                  <PostCard
+                    id={post.id}
+                    type={post.type}
+                    title={post.title}
+                    content={post.content}
+                    author={post.author}
+                    timestamp={post.timestamp as number}
+                    tags={post.tags}
+                    likes={post.likes}
+                    isLiked={post.isLiked}
+                    comments={post.comments}
+                    targetDept={post.targetDept}
+                  />
+                </div>
+              );
+            })}
+            {isFetchingMore && filteredPosts.length > page * postsPerPage && (
+              <div className="py-4 fade-in">
+                <PostSkeleton />
+              </div>
+            )}
+            {filteredPosts.length <= page * postsPerPage && filteredPosts.length > 0 && (
+              <div className="text-center text-white/40 text-sm py-8 fade-in">
+                You've caught up on all the posts!
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

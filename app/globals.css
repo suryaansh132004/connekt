@@ -31,7 +31,12 @@ html {
 }
 
 body {
-  background: #12001f;
+  background-color: #080808;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 20% 110%, #6a00c8cc 0%, transparent 70%),
+    radial-gradient(ellipse 60% 45% at 90% 100%, #5a0090aa 0%, transparent 65%);
+  background-attachment: fixed;
+  min-height: 100vh;
   color: #ffffff;
   font-family: var(--font-display), "Space Grotesk", sans-serif;
   -webkit-font-smoothing: antialiased;

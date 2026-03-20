@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useFeed } from "@/context/FeedContext";
 import PostCard, { PostType, typeColors } from "@/components/feed/PostCard";
 import { PlusCircle, Calendar, HelpCircle, BookOpen } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 
 /* =========================================================
    🔹 Create Post Page
@@ -11,6 +12,7 @@ import { PlusCircle, Calendar, HelpCircle, BookOpen } from "lucide-react";
 
 export default function CreatePostPage() {
   const { addPost } = useFeed();
+  const { user } = useAuth();
 
   /* ----------------------------
      🔸 State
@@ -21,6 +23,10 @@ export default function CreatePostPage() {
   const [content, setContent] = useState("");
   const [tagsInput, setTagsInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [eventDate, setEventDate] = useState("");
+  const [eventLocation, setEventLocation] = useState("");
+  const [isDeptSpecific, setIsDeptSpecific] = useState(false);
+  const [targetDept, setTargetDept] = useState("MIT");
   const [loreConfirmed, setLoreConfirmed] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -57,21 +63,38 @@ export default function CreatePostPage() {
       return;
     }
 
+    let finalContent = content;
+    if (type === "event") {
+      const metadata = [];
+      if (eventDate) metadata.push(`📆 Date: ${eventDate}`);
+      if (eventLocation) metadata.push(`📍 Location: ${eventLocation}`);
+      if (metadata.length > 0) {
+        finalContent = `${metadata.join("\n")}\n\n${content}`;
+      }
+    }
+
     addPost({
       id: crypto.randomUUID(),
       type,
       title,
-      content,
+      content: finalContent,
       author: type === "lore" ? "Anonymous" : "You",
+      authorId: user?.uid || "",
       timestamp: Date.now(),
       tags,
       likes: 0,
+      comments: [],
+      targetDept: (type === "event" || type === "question") && isDeptSpecific ? targetDept : undefined,
     });
 
     setTitle("");
     setContent("");
     setTagsInput("");
     setTags([]);
+    setEventDate("");
+    setEventLocation("");
+    setIsDeptSpecific(false);
+    setTargetDept("MIT");
     setLoreConfirmed(false);
     setError("");
     setSubmitted(true);
@@ -114,7 +137,7 @@ export default function CreatePostPage() {
   ========================================================= */
 
   return (
-    <div className="min-h-screen pt-10 px-6 md:px-12 space-y-10">
+    <div className="min-h-screen pt-10 pb-28 px-6 md:px-12 space-y-10">
       <h1 className="text-3xl font-bold">Create Post</h1>
 
       {/* TYPE SELECTOR */}
@@ -195,6 +218,63 @@ export default function CreatePostPage() {
             />
           </div>
 
+          {/* Event Metadata */}
+          {type === "event" && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm text-white/60">Event Date</label>
+                <input
+                  type="date"
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                  className="w-full mt-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white color-scheme-dark"
+                  style={{ colorScheme: "dark" }}
+                />
+              </div>
+              <div>
+                <label className="text-sm text-white/60">Location</label>
+                <input
+                  value={eventLocation}
+                  onChange={(e) => setEventLocation(e.target.value)}
+                  placeholder="e.g. EC Area"
+                  className="w-full mt-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Department Targeting */}
+          {(type === "event" || type === "question") && (
+            <div className="space-y-3 p-4 rounded-xl bg-white/5 border border-white/10">
+              <label className="flex items-center gap-3 cursor-pointer text-sm text-white/80 select-none">
+                <input
+                  type="checkbox"
+                  checked={isDeptSpecific}
+                  onChange={(e) => setIsDeptSpecific(e.target.checked)}
+                  className="w-4 h-4 rounded border-white/10 bg-white/5 accent-[#7CFF8A]"
+                />
+                Is this {type} for a specific department only?
+              </label>
+
+              {isDeptSpecific && (
+                <div className="mt-3 pl-7">
+                  <label className="text-xs text-white/50 block mb-2 uppercase tracking-wider font-semibold">Select Target Department</label>
+                  <select
+                    value={targetDept}
+                    onChange={(e) => setTargetDept(e.target.value)}
+                    className="w-full bg-[#12001F] border border-white/10 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-[#7CFF8A]/40 appearance-none bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22gray%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20d%3D%22M7%2010l5%205%205-5H7z%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[position:calc(100%-1rem)_center]"
+                  >
+                    <option value="MIT">MIT</option>
+                    <option value="SMI">SMI</option>
+                    <option value="DLHS">DLHS</option>
+                    <option value="DOC">DOC</option>
+                    <option value="MLS">MLS</option>
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Tags */}
           <div>
             <label className="text-sm text-white/60">
@@ -233,11 +313,12 @@ export default function CreatePostPage() {
           <h2 className="text-sm text-white/60">Live Preview</h2>
 
           <PostCard
+            id="preview"
             type={type}
             title={title || "Your title will appear here"}
             content={content || "Your content will appear here"}
             author={type === "lore" ? "Anonymous" : "You"}
-            timestamp="Just now"
+            timestamp={Date.now()}
             tags={tags}
             likes={0}
           />

@@ -55,7 +55,7 @@ export default function BottomNav() {
 
   // Show on every mount/route change; auto-hide only when on /dms
   useEffect(() => {
-    showNav();
+    setTimeout(() => showNav(), 0);
     if (pathname === "/dms") scheduleHide();
     return () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);

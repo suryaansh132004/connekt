@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useUserProfile } from "@/context/UserProfileContext";
+import { useAuth } from "@/context/AuthContext";
 import {
   ArrowLeft,
   User,
@@ -14,7 +15,11 @@ import {
   Plus,
   X,
   Check,
+  Mail,
 } from "lucide-react";
+import { sendEmailVerification, reload } from "firebase/auth";
+import { auth } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 
 /* =========================================================
    🔹 Toggle
@@ -115,6 +120,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
 function SettingsContent() {
   const { profile, updateProfile, updateNotifications, updatePrivacy } =
     useUserProfile();
+  const { user, deleteAccount, deactivateAccount } = useAuth();
   const searchParams = useSearchParams();
 
   /* ----------------------------
@@ -142,6 +148,7 @@ function SettingsContent() {
     year: profile.year,
     bio: profile.bio,
     github: profile.github,
+    linkedin: profile.linkedin,
     portfolio: profile.portfolio,
     avatarColor: profile.avatarColor,
   });
@@ -149,18 +156,80 @@ function SettingsContent() {
   const [newSkill, setNewSkill] = useState("");
   const [saved, setSaved] = useState(false);
 
+  // Account Actions State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDeactivateModalOpen, setIsDeactivateModalOpen] = useState(false);
+  const [deleteConfirmEmail, setDeleteConfirmEmail] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Email Verification
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [verifySent, setVerifySent] = useState(false);
+  const [isEmailVerified, setIsEmailVerified] = useState(profile.isVerified);
+
+  // Sync state with profile object whenever it changes
+  useEffect(() => {
+    setIsEmailVerified(profile.isVerified);
+  }, [profile.isVerified]);
+
+  // Poll Firebase in background to detect when user clicks the link
+  useEffect(() => {
+    if (isEmailVerified || !user) return; // already verified or no user, no need to poll
+    
+    console.log("Starting verification polling for:", user.email);
+    
+    const interval = setInterval(async () => {
+      if (auth.currentUser) {
+        await reload(auth.currentUser);
+        console.log("Polling result - emailVerified:", auth.currentUser.emailVerified);
+        if (auth.currentUser.emailVerified) {
+          setIsEmailVerified(true);
+          
+          // 🔹 SYNC TO SUPABASE & UPDATE PROFILE CONTEXT
+          updateProfile({ isVerified: true });
+            
+          clearInterval(interval);
+        }
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [isEmailVerified, user]);
+
   const patch = (k: keyof typeof draft, v: string) =>
     setDraft((p) => ({ ...p, [k]: v }));
 
   const handleSave = () => {
+    // 1. Normalize URLs (ensuring https:// if missing)
+    const normalizeUrl = (u: string) => {
+      if (!u || u.trim() === "") return "";
+      const trimmed = u.trim();
+      if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        return trimmed;
+      }
+      return `https://${trimmed}`;
+    };
+
+    const sanitizedDraft = {
+      ...draft,
+      github: normalizeUrl(draft.github),
+      linkedin: normalizeUrl(draft.linkedin),
+      portfolio: normalizeUrl(draft.portfolio),
+    };
+
+    // Update local state so UI reflects sanitized URLs
+    setDraft(sanitizedDraft);
+
     // Derive initials from name
-    const parts = draft.displayName.trim().split(" ");
+    const parts = sanitizedDraft.displayName.trim().split(" ");
     const initials = parts
       .slice(0, 2)
       .map((w) => w[0]?.toUpperCase() ?? "")
       .join("");
 
-    updateProfile({ ...draft, skills, initials });
+    updateProfile({ ...sanitizedDraft, skills, initials });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -172,6 +241,63 @@ function SettingsContent() {
   };
 
   const AVATAR_COLORS = ["#4DEFFF", "#7CFF8A", "#FF5C8A", "#FFD166", "#a78bfa"];
+
+  /* ----------------------------
+     🔸 Email Verification
+  ----------------------------- */
+
+  const handleVerify = async () => {
+    if (!auth.currentUser) return;
+    setVerifyLoading(true);
+    setVerifyError(null);
+    setVerifySent(false);
+
+    try {
+      await sendEmailVerification(auth.currentUser);
+      setVerifySent(true);
+    } catch (error: any) {
+      console.error("Verification email error:", error);
+      if (error.code === "auth/too-many-requests") {
+        setVerifyError("Too many requests. Please wait a few minutes and try again.");
+      } else {
+        setVerifyError(error.message || "Failed to send verification email.");
+      }
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
+
+  const handleDeactivate = async () => {
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await deactivateAccount();
+    } catch (err: any) {
+      setActionError(err.message || "Failed to deactivate account.");
+      setActionLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (deleteConfirmEmail !== user?.email) {
+      setActionError("Email does not match.");
+      return;
+    }
+    if (!deletePassword) {
+      setActionError("Password is required to delete account.");
+      return;
+    }
+
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await deleteAccount(deleteConfirmEmail, deletePassword);
+    } catch (err: any) {
+      setActionError(err.message || "Failed to delete account. You may need to re-log in to confirm identity.");
+      setActionLoading(false);
+    }
+  };
+
 
   /* =========================================================
      🔹 UI
@@ -375,6 +501,14 @@ function SettingsContent() {
                 placeholder="https://github.com/yourname"
               />
             </Field>
+            <Field label="LinkedIn URL">
+              <input
+                className={inputCls}
+                value={draft.linkedin}
+                onChange={(e) => patch("linkedin", e.target.value)}
+                placeholder="https://linkedin.com/in/yourname"
+              />
+            </Field>
             <Field label="Portfolio / Website">
               <input
                 className={inputCls}
@@ -482,6 +616,57 @@ function SettingsContent() {
       {/* ─── ACCOUNT TAB ─────────────────────────────── */}
       {activeTab === "account" && (
         <div className="space-y-5">
+          {/* Learner Verification Section */}
+          <Section title="Learner Verification">
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <p className="text-sm font-medium text-white flex items-center gap-2">
+                    Email Verification Status
+                    {profile.isVerified ? (
+                       <span className="px-2 py-0.5 rounded-full bg-[#7CFF8A]/20 text-[#7CFF8A] text-xs flex items-center gap-1 border border-[#7CFF8A]/30">
+                          <Check size={12}/> Verified
+                       </span>
+                    ) : (
+                       <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-xs border border-amber-500/30">
+                          Unverified
+                       </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-white/40 mt-1 max-w-sm">
+                    {profile.isVerified
+                      ? `Your account is verified — all features are unlocked!`
+                      : `Verify ${user?.email ?? "your email"} to unlock posting, liking, and messaging.`}
+                  </p>
+                </div>
+                {!profile.isVerified && (
+                  <button
+                    onClick={handleVerify}
+                    disabled={verifyLoading || verifySent}
+                    className="px-4 py-2 rounded-xl bg-[#7CFF8A] text-[#12001F] font-semibold text-sm hover:shadow-[0_0_20px_rgba(122,255,136,0.4)] transition-all shrink-0 disabled:opacity-60 flex items-center gap-2"
+                  >
+                    {verifyLoading ? "Sending..." : verifySent ? (
+                      <><Check size={16}/> Email Sent</>
+                    ) : (
+                      <><Mail size={16}/> Send Verification Email</>
+                    )}
+                  </button>
+                )}
+              </div>
+              {verifySent && !profile.isVerified && (
+                <div className="text-xs text-[#7CFF8A] bg-[#7CFF8A]/5 p-3 rounded-xl border border-[#7CFF8A]/20 flex items-start gap-2">
+                  <Check size={14} className="shrink-0 mt-0.5"/>
+                  <span>Verification email sent to <strong>{user?.email}</strong>. Click the link in your inbox — the page will unlock automatically once verified.</span>
+                </div>
+              )}
+              {verifyError && (
+                 <div className="text-xs text-red-400 bg-red-500/10 p-3 rounded-xl border border-red-500/20">
+                   {verifyError}
+                 </div>
+              )}
+            </div>
+          </Section>
+
           <Section title="Account">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
@@ -492,9 +677,38 @@ function SettingsContent() {
                   Hide your profile and activity temporarily.
                 </p>
               </div>
-              <button className="px-4 py-2 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500 hover:text-white transition-colors text-sm font-medium shrink-0">
+              <button 
+                onClick={() => setIsDeactivateModalOpen(true)}
+                className="px-4 py-2 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500 hover:text-white transition-colors text-sm font-medium shrink-0"
+              >
                 Deactivate
               </button>
+            </div>
+          </Section>
+
+          {/* Report Bug Section */}
+          <Section title="Report a Bug">
+            <div className="space-y-4">
+              <p className="text-xs text-white/40">
+                Found something broken? Let us know and we'll fix it as soon as possible.
+              </p>
+              <div className="space-y-3">
+                <textarea
+                  id="bug-report"
+                  className={`${inputCls} min-h-[100px] resize-none`}
+                  placeholder="Describe the issue in detail..."
+                />
+                <button 
+                  onClick={() => {
+                    const msg = (document.getElementById("bug-report") as HTMLTextAreaElement)?.value;
+                    if (!msg) return;
+                    window.location.href = `mailto:suryaanshguleria541@gmail.com?subject=Connekt Bug Report&body=${encodeURIComponent(msg)}`;
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-white/10 border border-white/10 text-white text-sm font-semibold hover:bg-white/20 transition-all active:scale-[0.98]"
+                >
+                  Send Bug Report
+                </button>
+              </div>
             </div>
           </Section>
           <div className="border border-red-500/20 rounded-2xl p-5 bg-red-500/5">
@@ -509,8 +723,106 @@ function SettingsContent() {
                   undone.
                 </p>
               </div>
-              <button className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/40 text-red-400 hover:bg-red-500 hover:text-white transition-colors text-sm font-medium shrink-0">
+              <button 
+                onClick={() => setIsDeleteModalOpen(true)}
+                className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/40 text-red-400 hover:bg-red-500 hover:text-white transition-colors text-sm font-medium shrink-0"
+              >
                 Delete Account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── DEACTIVATE MODAL ────────────────────────── */}
+      {isDeactivateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !actionLoading && setIsDeactivateModalOpen(false)} />
+          <div className="relative w-full max-w-md bg-[#12001F] border border-white/10 rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <h2 className="text-xl font-bold text-white mb-2">Deactivate Account?</h2>
+            <p className="text-sm text-white/60 mb-6 leading-relaxed">
+              Your profile, posts, and comments will be hidden until you log back in. You can re-activate your account anytime by signing in.
+            </p>
+            
+            {actionError && (
+              <div className="mb-4 text-xs text-red-400 bg-red-400/10 border border-red-400/20 p-3 rounded-xl">
+                {actionError}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button 
+                disabled={actionLoading}
+                onClick={() => setIsDeactivateModalOpen(false)}
+                className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-medium hover:bg-white/10 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button 
+                disabled={actionLoading}
+                onClick={handleDeactivate}
+                className="flex-1 py-3 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
+              >
+                {actionLoading ? "Processing..." : "Deactivate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── DELETE MODAL ────────────────────────────── */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !actionLoading && setIsDeleteModalOpen(false)} />
+          <div className="relative w-full max-w-md bg-[#12001F] border border-white/10 rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="w-12 h-12 rounded-2xl bg-red-500/20 flex items-center justify-center text-red-400 mb-4">
+              <AlertTriangle size={24} />
+            </div>
+            <h2 className="text-xl font-bold text-white mb-2">Delete Account Permanently?</h2>
+            <p className="text-sm text-white/60 mb-6 leading-relaxed">
+              This action <span className="text-white font-bold">cannot be undone</span>. All your posts, comments, and profile data will be permanently removed.
+            </p>
+
+            <div className="space-y-4 mb-6">
+              <Field label={`Type "${user?.email}" to confirm`}>
+                <input 
+                  className={inputCls}
+                  value={deleteConfirmEmail}
+                  onChange={(e) => setDeleteConfirmEmail(e.target.value)}
+                  placeholder={user?.email || ""}
+                />
+              </Field>
+              <Field label="Enter Password">
+                <input 
+                  type="password"
+                  className={inputCls}
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  placeholder="Password"
+                />
+              </Field>
+            </div>
+
+            {actionError && (
+              <div className="mb-4 text-xs text-red-400 bg-red-400/10 border border-red-400/20 p-3 rounded-xl">
+                {actionError}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button 
+                disabled={actionLoading}
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-medium hover:bg-white/10 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button 
+                disabled={actionLoading}
+                onClick={handleDelete}
+                className="flex-1 py-3 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
+              >
+                {actionLoading ? "Deleting..." : "Delete Permanently"}
               </button>
             </div>
           </div>
@@ -518,7 +830,9 @@ function SettingsContent() {
       )}
     </div>
   );
-}/* =========================================================
+}
+
+/* =========================================================
    🔹 Default export — Suspense wrapper required by Next.js
        App Router for useSearchParams()
 ========================================================= */
